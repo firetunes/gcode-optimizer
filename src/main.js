@@ -54,6 +54,26 @@ function getXY(s) {
 	return [x,y];
 }
 
+function getXYZ(s) {
+	var x = false;
+	var y = false;
+	var z = false;
+
+	var d = s.split(' ');
+
+	for (var rr=0; rr<d.length; rr++) {
+		if (d[rr].substr(0,1) == 'x') {
+			x = Number(d[rr].substr(1));
+		} else if (d[rr].substr(0,1) == 'y') {
+			y = Number(d[rr].substr(1));
+		} else if (d[rr].substr(0,1) == 'z') {
+			z = Number(d[rr].substr(1));
+		}
+	}
+
+	return [x,y,z];
+}
+
 var priorToG0 = [];
 var eof = [];
 
@@ -66,11 +86,12 @@ r.onload = function(e) {
 
 	var notG0 = [];
 	var allG0 = [];
+	var curz = 0.1;
 
 	// split the file by newlines
 	var nl = r.result.split('\n');
 
-	console.log(nl);
+	//console.log(nl);
 
 	// loop through each newline
 	for (var c=0; c<nl.length; c++) {
@@ -78,10 +99,15 @@ r.onload = function(e) {
 		// make everything lowercase
 		nl[c] = nl[c].toLowerCase();
 
+		var z = getXYZ(nl[c])[2];
+		if(z !== false){
+			curz = z;
+		}
+
 		// check if this line is a G0 command
 		if (nl[c].substr(0,3) == 'g0 ') {
 
-			console.log('found g0');
+			//console.log('found g0');
 
 			// this line is a G0 command, get the X and Y values
 			var xy = getXY(nl[c]);
@@ -91,15 +117,7 @@ r.onload = function(e) {
 			// check if x or y exist for this line
 			if ((x !== false || y !== false) && (x !== false && y !== false)) {
 				// if x or y here is false we need to use the last coordinate from the previous G0 or G1 in followingLines as that is where the machine would be
-				if (y === false && allG0.length > 0) {
-					// loop through allG0[-1].followingLines to find the most recent G0 or G1 with a y coordinate
-					for (var h=0; h<allG0[-1].followingLines.length; h++) {
-						if ((allG0[-1].followingLines[h].substr(0,3) == 'g0 ' || allG0[-1].followingLines[h].substr(0,3) == 'g1 ') && allG0[-1].followingLines[h].match(/ y/)) {
-							// set this y coordinate as y
-							y = getXY(allG0[-1].followingLines[h])[1];
-						}
-					}
-				} else if (x === false && allG0.length > 0) {
+				if (x === false && allG0.length > 0) {
 					// loop through allG0[-1].followingLines to find the most recent G0 or G1 with a x coordinate
 					for (var h=0; h<allG0[-1].followingLines.length; h++) {
 						if ((allG0[-1].followingLines[h].substr(0,3) == 'g0 ' || allG0[-1].followingLines[h].substr(0,3) == 'g1 ') && allG0[-1].followingLines[h].match(/ x/)) {
@@ -109,18 +127,32 @@ r.onload = function(e) {
 					}
 				}
 
-				if (allG0.length > 0) {
+				if (y === false && allG0.length > 0) {
+					// loop through allG0[-1].followingLines to find the most recent G0 or G1 with a y coordinate
+					for (var h=0; h<allG0[-1].followingLines.length; h++) {
+						if ((allG0[-1].followingLines[h].substr(0,3) == 'g0 ' || allG0[-1].followingLines[h].substr(0,3) == 'g1 ') && allG0[-1].followingLines[h].match(/ y/)) {
+							// set this y coordinate as y
+							y = getXY(allG0[-1].followingLines[h])[1];
+						}
+					}
+				} 
 
+				if (allG0.length > 0) {
 					// allG0 has entries, so we need to add notG0 to the followingLines for the previous entry in allG0
 					for (var mm=0; mm<notG0.length; mm++) {
 						allG0[allG0.length-1].followingLines.push(notG0[mm]);
 					}
-
 				}
 
+				// validate that curz is greater than 0. If not, add G1 Z0.10000 F25.0 to previous allG0
+				if(allG0.length > 0 && curz <= 0) {
+					allG0[allG0.length-1].followingLines.push('g20');
+					allG0[allG0.length-1].followingLines.push('g1 z0.10000 f25.0');
+					curz = 0.1;
+				}
 
 				// this G0 has a valid X or Y coordinate, add it to allG0 with itself (the G0) as the first entry in followingLines
-				allG0.push({x:x,y:y,followingLines:[nl[c]]});
+				allG0.push({x:x,y:y,z:curz,followingLines:[nl[c]]});
 
 				// reset notG0
 				notG0 = [];
@@ -142,8 +174,6 @@ r.onload = function(e) {
 
 	}
 
-	console.log(notG0);
-
 	// add notG0 to the followingLines for the last entry in allG0
 	// this gets the lines after the last G0 in the file
 	// we also need to check if the commands here are not G0, G1, G2, G3, or G4
@@ -159,8 +189,12 @@ r.onload = function(e) {
 		}
 	}
 
+	// preserve final g0 movement at the end of the code.
+	eof.unshift(...allG0.pop().followingLines);
+
 	console.log('priorToG0',priorToG0);
 	console.log('allG0',allG0);
+	console.log('eof', eof);
 
 	var minX = allG0[0].x;
 	var minY = allG0[0].y;
@@ -256,6 +290,7 @@ console.log(points[best[0]]);
 	for (var c=0; c<eof.length; c++) {
 		fout += eof[c] + '\n';
 	}
+	fout = fout.toUpperCase();
 
 	var blob = new Blob([fout]);
 	var fn = gc.value;
@@ -348,11 +383,15 @@ function draw() {
 	// draw all the points as dots
     for(var i=0; i<points.length; i++) {
       drawCircle(points[i]);
-    }
+	}
+	
+	if(best.length !== points.length) {
+		best = [...Array(points.length).keys()]
+	}
 
 	// draw the path
     if(best.length === points.length) {
-      drawLines(best);
+	  drawLines(best);
     }
   }
 
